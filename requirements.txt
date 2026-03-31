@@ -1,0 +1,4 @@
+aiohttp
+coloredlogs
+numpy
+python-binance
