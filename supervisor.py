@@ -7,14 +7,16 @@ from binance import AsyncClient
 from collector import collector
 from logger_setup import setup_logger
 from worker_utils import SymbolActivationPendingError
-from workers import StreamTimeoutEscalationError, worker
+from workers import worker
 
 logger = setup_logger()
+
 MAX_RETRIES = 10
 CLIENT_CREATE_MAX_RETRIES = 5
 CLIENT_CREATE_RETRY_DELAY = 5
 PENDING_SYMBOL_RETRY_BASE_DELAY = 60
 PENDING_SYMBOL_RETRY_MAX_DELAY = 900
+PAIR_REFRESH_INTERVAL = 60
 
 
 class TaskInfo:
@@ -43,7 +45,7 @@ class TaskInfo:
     async def _runner(self):
         try:
             await self.worker_func(self.pair, self.queue, self.client, self.runtime_state)
-            logger.debug(f"[{self.pair}] finished worker normally")
+            logger.debug(f"[{self.pair}] worker finished normally")
             self.retries = 0
             self.pending_retries = 0
             self.next_retry_at = 0.0
@@ -55,12 +57,9 @@ class TaskInfo:
             )
             self.next_retry_at = asyncio.get_running_loop().time() + delay
             logger.info(
-                f"[{self.pair}] symbol is listed but not active in streams yet; "
+                f"[{self.pair}] symbol exists but stream is not ready yet; "
                 f"next check in {delay} sec"
             )
-        except StreamTimeoutEscalationError as e:
-            self.blocked = True
-            logger.error(f"[{self.pair}] blocked due to repeated stream timeouts: {e}")
         except Exception as e:
             logger.error(f"[{self.pair}] crashed: {e}")
             self.retries += 1
@@ -83,7 +82,7 @@ class TaskInfo:
 async def check_network():
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get("https://api.binance.com/api/v3/ping", timeout=10) as response:
+            async with session.get("https://fapi.binance.com/fapi/v1/ping", timeout=10) as response:
                 return response.status == 200
     except Exception as e:
         logger.warning(f"Network check failed: {e}")
@@ -123,8 +122,16 @@ async def get_pairs(client):
         "BTCUSDT_240927", "USDCUSDT", "BTCSTUSDT", "CKBUSDT",
         "ETHUSDT_250328", "BTCUSDT_250328", "REEFUSDT",
     ]
+    tracked_quote_assets = {"USDT", "USDC"}
     usdt_pairs = sorted(
-        [s["symbol"] for s in res["symbols"] if "USDT" in s["symbol"] and s["symbol"] not in excluded_pairs]
+        [
+            s["symbol"]
+            for s in res["symbols"]
+            if s.get("quoteAsset") in tracked_quote_assets
+            and s.get("contractType") == "PERPETUAL"
+            and s.get("status") == "TRADING"
+            and s["symbol"] not in excluded_pairs
+        ]
     )
     return usdt_pairs
 
@@ -134,20 +141,26 @@ async def supervisor():
     queue = asyncio.Queue()
     client = None
     collector_task = None
+    current_pairs: set[str] = set()
+    next_pairs_refresh_at = 0.0
 
     try:
         client = await create_binance_client()
         collector_task = asyncio.create_task(collector(queue))
 
         while True:
+            loop = asyncio.get_running_loop()
+
             if not await check_network():
-                logger.debug("Network DOWN, stopping all tasks...")
+                logger.debug("Network down, stopping all tasks...")
                 await asyncio.gather(*(t.stop() for t in tasks.values()), return_exceptions=True)
                 await asyncio.sleep(10)
                 continue
 
-            new_pairs = set(await get_pairs(client))
-            new_pairs = list(new_pairs)[:]
+            if loop.time() >= next_pairs_refresh_at:
+                current_pairs = set(await get_pairs(client))
+                next_pairs_refresh_at = loop.time() + PAIR_REFRESH_INTERVAL
+
             active = sum(
                 1 for t in tasks.values() if not t.blocked and t.task and not t.task.done()
             )
@@ -160,18 +173,18 @@ async def supervisor():
                 if task_info.blocked
             )
             logger.info(
-                f"Total pairs={len(new_pairs)}, active={active}, "
+                f"Total pairs={len(current_pairs)}, active={active}, "
                 f"inactive={len(inactive_pairs)}, inactive_pairs={inactive_pairs}, "
                 f"blocked={len(blocked_pairs)}, blocked_pairs={blocked_pairs}"
             )
 
-            for pair in set(new_pairs) - set(tasks.keys()):
+            for pair in current_pairs - set(tasks.keys()):
                 tasks[pair] = TaskInfo(pair, worker, queue, client)
                 await tasks[pair].start(reason="new")
                 logger.debug(f"Added pair {pair}")
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.65)
 
-            for pair in set(tasks.keys()) - set(new_pairs):
+            for pair in set(tasks.keys()) - current_pairs:
                 await tasks[pair].stop()
                 del tasks[pair]
                 logger.debug(f"Removed pair {pair}")
