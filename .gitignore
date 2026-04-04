@@ -16,6 +16,7 @@ ENV/
 
 *.log
 logs/
+data/
 
 build/
 dist/
