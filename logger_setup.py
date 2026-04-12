@@ -11,7 +11,7 @@ CRITICAL → фиолетовый
 """
 def setup_logger(name="bot"):
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     # Кастомные цвета
     FIELD_STYLES = {
@@ -29,7 +29,7 @@ def setup_logger(name="bot"):
     }
 
     coloredlogs.install(
-        level='DEBUG',
+        level='INFO',
         logger=logger,
         stream=sys.stdout,
         fmt="%(asctime)s [%(levelname)s] %(message)s",

@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bot Strategy Builder</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">BT</div>
+        <div>
+          <div class="eyebrow">Operator Panel</div>
+          <h1>Strategy Builder</h1>
+        </div>
+      </div>
+
+      <div class="sidebar-actions">
+        <button class="solid">New Strategy</button>
+        <button>Duplicate</button>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Strategies</h2>
+          <span id="strategy-count" class="pill">0</span>
+        </div>
+        <div id="strategy-list" class="strategy-list"></div>
+      </section>
+
+      <section class="panel overview-card">
+        <div class="panel-head">
+          <h2>System</h2>
+          <span id="bot-status-pill" class="status-pill">loading</span>
+        </div>
+        <div class="sidebar-actions">
+          <button id="bot-start" class="solid">Start Bot</button>
+          <button id="bot-stop">Stop Bot</button>
+        </div>
+        <div class="metric-grid">
+          <div class="metric">
+            <span>Tracked</span>
+            <strong id="tracked-pairs">-</strong>
+          </div>
+          <div class="metric">
+            <span>Queue</span>
+            <strong id="queue-size">-</strong>
+          </div>
+          <div class="metric">
+            <span>Queue Peak</span>
+            <strong id="queue-peak">-</strong>
+          </div>
+          <div class="metric">
+            <span>Book WS Limit</span>
+            <strong id="book-ws-queue-limit">0</strong>
+          </div>
+          <div class="metric">
+            <span>Book WS Overflows</span>
+            <strong id="book-ws-overflow-count">0</strong>
+          </div>
+          <div class="metric">
+            <span>Book WS Restarts</span>
+            <strong id="book-ws-restart-count">0</strong>
+          </div>
+          <div class="metric">
+            <span>Book WS Sampled</span>
+            <strong id="book-ws-sampled-out">0</strong>
+          </div>
+          <div class="metric">
+            <span>Net RX Kb/s</span>
+            <strong id="network-rx-kbps">-</strong>
+          </div>
+          <div class="metric">
+            <span>Positions</span>
+            <strong id="open-positions">-</strong>
+          </div>
+          <div class="metric">
+            <span>Orders</span>
+            <strong id="open-orders">-</strong>
+          </div>
+        </div>
+        <div class="stream-chart-wrap">
+          <div class="stream-chart-head">
+            <span>Stream Changes</span>
+            <strong id="stream-samples-count">0</strong>
+          </div>
+          <svg id="overview-stream-chart" viewBox="0 0 280 150" preserveAspectRatio="none"></svg>
+          <div id="overview-stream-legend" class="stream-legend"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Candle Loader</h2>
+          <span id="loader-status-pill" class="pill">idle</span>
+        </div>
+        <div class="loader-form">
+          <label>
+            <span>Start Delay, sec</span>
+            <input id="loader-start-delay" type="number" min="0" step="0.1">
+          </label>
+        </div>
+        <div class="sidebar-actions">
+          <button id="loader-save">Apply</button>
+          <button id="loader-start" class="solid">Start</button>
+          <button id="loader-stop">Stop</button>
+        </div>
+        <div class="loader-stats">
+          <div class="metric">
+            <span>Progress</span>
+            <strong id="loader-progress">0 / 0</strong>
+          </div>
+          <div class="metric">
+            <span>Current</span>
+            <strong id="loader-current">-</strong>
+          </div>
+          <div class="metric">
+            <span>Last Done</span>
+            <strong id="loader-last">-</strong>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="selector-row">
+          <label>
+            <span>Symbol</span>
+            <div id="symbol-combobox" class="combobox">
+              <input
+                id="symbol-input"
+                type="text"
+                placeholder="Type symbol..."
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <button id="symbol-toggle" class="combobox-toggle" type="button" aria-label="Open symbol list">
+                <span></span>
+              </button>
+              <div id="symbol-dropdown" class="combobox-dropdown"></div>
+            </div>
+          </label>
+          <label>
+            <span>Timeframe</span>
+            <select id="timeframe-select">
+              <option>1m</option>
+              <option>5m</option>
+              <option>15m</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="topbar-actions">
+          <button>Indicators</button>
+          <button>Signals</button>
+          <button>Backtest</button>
+          <button class="solid">Save Strategy</button>
+        </div>
+      </header>
+
+      <section class="chart-stage panel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">Chart First</div>
+            <h2 id="chart-title">BTCUSDT</h2>
+          </div>
+          <div class="chart-legend">
+            <span class="legend-item candles">Candles</span>
+            <span class="legend-item sma">SMA 30</span>
+            <span class="legend-item signals">Signals</span>
+          </div>
+        </div>
+        <section class="live-status-strip">
+          <article class="live-status-card">
+            <span class="live-status-label">History</span>
+            <strong id="live-history-status">-</strong>
+            <small id="live-history-meta">startup check</small>
+          </article>
+          <article class="live-status-card">
+            <span class="live-status-label">Stream</span>
+            <strong id="live-stream-status">-</strong>
+            <small id="live-stream-meta">waiting</small>
+          </article>
+          <article class="live-status-card">
+            <span class="live-status-label">Live 5m</span>
+            <strong id="live-window-points">-</strong>
+            <small id="live-window-meta">no data</small>
+          </article>
+          <article class="live-status-card">
+            <span class="live-status-label">DB 1m Sync</span>
+            <strong id="live-db-sync-status">-</strong>
+            <small id="live-db-sync-meta">waiting</small>
+          </article>
+        </section>
+        <section class="chart-summary-strip">
+          <article class="chart-summary-card">
+            <span>Last</span>
+            <strong id="chart-last-price">-</strong>
+          </article>
+          <article class="chart-summary-card">
+            <span>Change</span>
+            <strong id="chart-price-change">-</strong>
+          </article>
+          <article class="chart-summary-card">
+            <span>Open</span>
+            <strong id="chart-open-price">-</strong>
+          </article>
+          <article class="chart-summary-card">
+            <span>High</span>
+            <strong id="chart-high-price">-</strong>
+          </article>
+          <article class="chart-summary-card">
+            <span>Low</span>
+            <strong id="chart-low-price">-</strong>
+          </article>
+          <article class="chart-summary-card">
+            <span>Updated</span>
+            <strong id="chart-updated-at">-</strong>
+          </article>
+        </section>
+        <svg id="price-chart" viewBox="0 0 1200 420" preserveAspectRatio="none"></svg>
+        <svg id="indicator-chart" viewBox="0 0 1200 150" preserveAspectRatio="none"></svg>
+      </section>
+
+      <section class="trade-desk">
+        <section class="panel trade-ticket">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">Manual Execution</div>
+              <h2>Order Ticket</h2>
+            </div>
+            <span id="manual-order-status" class="pill">idle</span>
+          </div>
+          <div class="ticket-grid">
+            <label>
+              <span>Symbol</span>
+              <input id="order-symbol" type="text" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span>Side</span>
+              <select id="order-side">
+                <option value="BUY">Buy / Long</option>
+                <option value="SELL">Sell / Short</option>
+              </select>
+            </label>
+            <label>
+              <span>Position Side</span>
+              <select id="order-position-side">
+                <option value="BOTH">Both</option>
+                <option value="LONG">Long</option>
+                <option value="SHORT">Short</option>
+              </select>
+            </label>
+            <label>
+              <span>Order Type</span>
+              <select id="order-type">
+                <option value="MARKET">Market</option>
+                <option value="LIMIT">Limit</option>
+                <option value="STOP_MARKET">Stop Market</option>
+                <option value="TAKE_PROFIT_MARKET">Take Profit Market</option>
+              </select>
+            </label>
+            <label>
+              <span>Leverage</span>
+              <input id="order-leverage" type="number" min="1" step="1" placeholder="Optional">
+            </label>
+            <label>
+              <span>Quantity</span>
+              <input id="order-quantity" type="number" min="0" step="any" placeholder="0.001">
+            </label>
+            <label id="order-price-wrap">
+              <span>Limit Price</span>
+              <input id="order-price" type="number" min="0" step="any" placeholder="Required for LIMIT">
+            </label>
+            <label id="order-stop-price-wrap">
+              <span>Trigger Price</span>
+              <input id="order-stop-price" type="number" min="0" step="any" placeholder="Required for trigger orders">
+            </label>
+          </div>
+          <div class="ticket-switches">
+            <label class="switch-row">
+              <input id="order-reduce-only" type="checkbox">
+              <span>Reduce only</span>
+            </label>
+            <label class="switch-row">
+              <input id="order-post-only" type="checkbox">
+              <span>Post only</span>
+            </label>
+          </div>
+          <div id="order-switch-note" class="trade-note">Execution flags adapt to the current Binance position mode.</div>
+          <div class="ticket-summary">
+            <article class="trade-meta-card">
+              <span>Mark</span>
+              <strong id="manual-mark-price">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Mode</span>
+              <strong id="manual-position-mode">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Est. Notional</span>
+              <strong id="manual-est-notional">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Maker Fee</span>
+              <strong id="manual-maker-fee">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Taker Fee</span>
+              <strong id="manual-taker-fee">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Qty Step</span>
+              <strong id="manual-qty-step">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Price Tick</span>
+              <strong id="manual-price-tick">-</strong>
+            </article>
+          </div>
+          <div class="trade-actions">
+            <button id="manual-order-refresh">Refresh Context</button>
+            <button id="manual-order-submit" class="solid">Place Order</button>
+          </div>
+        </section>
+
+        <section class="panel trade-context-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">Execution Guardrails</div>
+              <h2>Context & Result</h2>
+            </div>
+          </div>
+          <div class="trade-context-grid">
+            <article class="trade-meta-card">
+              <span>Avail. Balance</span>
+              <strong id="manual-balance">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Position</span>
+              <strong id="manual-position-size">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Min Qty</span>
+              <strong id="manual-min-qty">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Min Notional</span>
+              <strong id="manual-min-notional">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Max Leverage</span>
+              <strong id="manual-max-leverage">-</strong>
+            </article>
+            <article class="trade-meta-card">
+              <span>Trigger Protect</span>
+              <strong id="manual-trigger-protect">-</strong>
+            </article>
+            <article class="trade-meta-card trade-meta-card-wide">
+              <span>Fee Note</span>
+              <strong id="manual-fee-note">-</strong>
+            </article>
+          </div>
+          <div id="manual-order-message" class="trade-message">No manual order submitted yet.</div>
+          <pre id="manual-order-result" class="trade-result">Awaiting order response…</pre>
+        </section>
+      </section>
+
+      <section class="bottom-grid">
+        <section class="panel rule-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">Visual Rules</div>
+              <h2>Entry Logic</h2>
+            </div>
+            <div class="inline-actions">
+              <button>Add AND</button>
+              <button>Add OR</button>
+              <button class="solid">Add Condition</button>
+            </div>
+          </div>
+          <div id="rule-tree" class="rule-tree"></div>
+          <div class="action-box">
+            <div class="eyebrow">Action</div>
+            <div id="action-summary"></div>
+          </div>
+        </section>
+
+        <section class="panel catalog-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">Condition Library</div>
+              <h2>Available Blocks</h2>
+            </div>
+          </div>
+          <div id="catalog-groups" class="catalog-groups"></div>
+        </section>
+
+        <section class="panel eval-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">Why Triggered</div>
+              <h2>Live Evaluation</h2>
+            </div>
+          </div>
+          <div id="evaluation-list" class="evaluation-list"></div>
+          <div class="subsection-head">
+            <div class="eyebrow">Recent Account Events</div>
+          </div>
+          <div id="recent-user-events" class="evaluation-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

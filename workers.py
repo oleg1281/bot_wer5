@@ -1,10 +1,12 @@
 import asyncio
+import json
 import random
 from typing import Iterable
 
 from binance import BinanceSocketManager
 
 from logger_setup import setup_logger
+from runtime_state import record_network_ingress, update_overview
 
 logger = setup_logger()
 
@@ -12,7 +14,7 @@ MARKET_BATCH_SIZE = 25
 MARKET_STREAM_TIMEOUT = 120
 RECONNECT_BASE_DELAY = 5
 RECONNECT_MAX_DELAY = 60
-WS_MAX_QUEUE_SIZE = 2000
+WS_MAX_QUEUE_SIZE = 10000
 BOOK_TICKER_SAMPLE_EVERY = 1
 
 
@@ -28,6 +30,13 @@ def build_market_streams(symbols: Iterable[str]) -> list[str]:
     return streams
 
 
+def estimate_message_size(message) -> int:
+    try:
+        return len(json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    except Exception:
+        return len(str(message).encode("utf-8", errors="ignore"))
+
+
 def normalize_market_event(message: dict) -> dict | None:
     stream_name = message.get("stream")
     payload = message.get("data")
@@ -41,7 +50,17 @@ def normalize_market_event(message: dict) -> dict | None:
             "event_type": "kline",
             "stream": stream_name,
             "pair": payload.get("s"),
+            "open_time": int(kline["t"]),
+            "close_time": int(kline["T"]),
+            "open": float(kline["o"]),
+            "high": float(kline["h"]),
+            "low": float(kline["l"]),
             "close": float(kline["c"]),
+            "volume": float(kline["v"]),
+            "quote_volume": float(kline["q"]) if kline.get("q") is not None else None,
+            "trades": int(kline["n"]) if kline.get("n") is not None else None,
+            "taker_base_volume": float(kline["V"]) if kline.get("V") is not None else None,
+            "taker_quote_volume": float(kline["Q"]) if kline.get("Q") is not None else None,
             "closed": bool(kline["x"]),
             "interval": kline["i"],
             "event_time": payload.get("E"),
@@ -178,6 +197,7 @@ async def multiplex_market_worker(
                     message = await asyncio.wait_for(
                         market_stream.recv(), timeout=float(MARKET_STREAM_TIMEOUT)
                     )
+                    record_network_ingress(estimate_message_size(message))
                     event = normalize_market_event(message)
                     if event is None:
                         continue
@@ -220,6 +240,7 @@ async def user_stream_worker(
 
                 while True:
                     message = await user_stream.recv()
+                    record_network_ingress(estimate_message_size(message))
                     event = normalize_user_event(message)
                     if event is None:
                         continue
@@ -251,16 +272,25 @@ async def all_book_ticker_worker(
     runtime_state.setdefault("messages_received", 0)
     runtime_state.setdefault("sampled_out_messages", 0)
     runtime_state.setdefault("per_symbol_seen_counts", {})
+    runtime_state.setdefault("restart_count", 0)
+    runtime_state.setdefault("overflow_count", 0)
+    allowed_symbols = set(tracked_symbols) if tracked_symbols else None
+
+    update_overview(
+        book_ws_queue_limit=WS_MAX_QUEUE_SIZE,
+        book_ws_overflow_count=int(runtime_state["overflow_count"]),
+        book_ws_restart_count=int(runtime_state["restart_count"]),
+        book_ws_sampled_out=int(runtime_state["sampled_out_messages"]),
+    )
 
     bm = BinanceSocketManager(
         client,
         user_timeout=MARKET_STREAM_TIMEOUT,
         max_queue_size=WS_MAX_QUEUE_SIZE,
     )
-    tracked_symbol_set = set(tracked_symbols)
 
     logger.info(
-        f"{stream_id}: starting global futures bookTicker stream for {len(tracked_symbol_set)} pairs, "
+        f"{stream_id}: starting global futures bookTicker stream for all pairs, "
         f"sample_every={BOOK_TICKER_SAMPLE_EVERY}"
     )
 
@@ -274,6 +304,7 @@ async def all_book_ticker_worker(
                     message = await asyncio.wait_for(
                         book_stream.recv(), timeout=float(MARKET_STREAM_TIMEOUT)
                     )
+                    record_network_ingress(estimate_message_size(message))
                     if isinstance(message, dict) and "data" in message:
                         data_payload = message.get("data")
                         if isinstance(data_payload, list):
@@ -291,7 +322,7 @@ async def all_book_ticker_worker(
                             continue
 
                         pair = event["pair"]
-                        if pair not in tracked_symbol_set:
+                        if allowed_symbols is not None and pair not in allowed_symbols:
                             continue
 
                         seen_counts = runtime_state["per_symbol_seen_counts"]
@@ -301,8 +332,17 @@ async def all_book_ticker_worker(
                             continue
 
                         runtime_state["messages_received"] += 1
-                        await queue.put(event)
+                        queue.put_nowait(event)
         except Exception as e:
+            runtime_state["restart_count"] += 1
+            if "QueueOverflow" in type(e).__name__ or "QueueOverflow" in repr(e):
+                runtime_state["overflow_count"] += 1
+            update_overview(
+                book_ws_queue_limit=WS_MAX_QUEUE_SIZE,
+                book_ws_overflow_count=int(runtime_state["overflow_count"]),
+                book_ws_restart_count=int(runtime_state["restart_count"]),
+                book_ws_sampled_out=int(runtime_state["sampled_out_messages"]),
+            )
             delay = runtime_state["reconnect_delay"]
             sleep_for = min(delay + random.uniform(0, delay * 0.2), RECONNECT_MAX_DELAY)
             logger.error(
