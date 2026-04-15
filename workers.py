@@ -30,6 +30,10 @@ def build_market_streams(symbols: Iterable[str]) -> list[str]:
     return streams
 
 
+def build_book_ticker_streams(symbols: Iterable[str]) -> list[str]:
+    return [f"{symbol.lower()}@bookTicker" for symbol in symbols]
+
+
 def estimate_message_size(message) -> int:
     try:
         return len(json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
@@ -114,6 +118,23 @@ def normalize_book_ticker_payload(payload: dict) -> dict | None:
         "event_time": payload.get("E"),
         "update_id": update_id,
     }
+
+
+def extract_book_ticker_payloads(message) -> list[dict]:
+    if isinstance(message, list):
+        return [payload for payload in message if isinstance(payload, dict)]
+
+    if not isinstance(message, dict):
+        return []
+
+    if "data" in message:
+        data = message.get("data")
+        if isinstance(data, list):
+            return [payload for payload in data if isinstance(payload, dict)]
+        if isinstance(data, dict):
+            return [data]
+
+    return [message]
 
 
 def normalize_user_event(message: dict) -> dict | None:
@@ -290,13 +311,13 @@ async def all_book_ticker_worker(
     )
 
     logger.info(
-        f"{stream_id}: starting global futures bookTicker stream for all pairs, "
-        f"sample_every={BOOK_TICKER_SAMPLE_EVERY}"
+        f"{stream_id}: starting global futures bookTicker stream for filtered pairs, "
+        f"tracked_pairs={len(tracked_symbols)}, sample_every={BOOK_TICKER_SAMPLE_EVERY}"
     )
 
     while True:
         try:
-            async with bm.all_ticker_futures_socket() as book_stream:
+            async with bm.all_ticker_futures_socket(channel="!bookTicker") as book_stream:
                 runtime_state["reconnect_delay"] = RECONNECT_BASE_DELAY
                 logger.info(f"{stream_id}: global futures bookTicker stream started")
 
@@ -305,18 +326,7 @@ async def all_book_ticker_worker(
                         book_stream.recv(), timeout=float(MARKET_STREAM_TIMEOUT)
                     )
                     record_network_ingress(estimate_message_size(message))
-                    if isinstance(message, dict) and "data" in message:
-                        data_payload = message.get("data")
-                        if isinstance(data_payload, list):
-                            payloads = data_payload
-                        elif isinstance(data_payload, dict):
-                            payloads = [data_payload]
-                        else:
-                            payloads = []
-                    else:
-                        payloads = message if isinstance(message, list) else [message]
-
-                    for payload in payloads:
+                    for payload in extract_book_ticker_payloads(message):
                         event = normalize_book_ticker_payload(payload)
                         if event is None:
                             continue
@@ -333,6 +343,7 @@ async def all_book_ticker_worker(
 
                         runtime_state["messages_received"] += 1
                         queue.put_nowait(event)
+
         except Exception as e:
             runtime_state["restart_count"] += 1
             if "QueueOverflow" in type(e).__name__ or "QueueOverflow" in repr(e):

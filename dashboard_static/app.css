@@ -252,6 +252,34 @@ button:disabled {
   margin-top: 14px;
 }
 
+.batch-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.batch-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.batch-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.batch-symbols {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
 .metric {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 18px;
@@ -876,6 +904,124 @@ button:disabled {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text);
   font-size: 0.82rem;
+}
+
+.universe-panel {
+  grid-column: 1 / -1;
+}
+
+.universe-toolbar {
+  margin-bottom: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.universe-toolbar input {
+  width: 100%;
+  max-width: 280px;
+}
+
+.universe-toolbar select {
+  min-width: 170px;
+}
+
+.universe-selected-pill {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+}
+
+.universe-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.universe-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.universe-table th,
+.universe-table td {
+  text-align: left;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.universe-check-cell {
+  width: 40px;
+  text-align: center !important;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+}
+
+.universe-table th {
+  color: var(--muted);
+  font-size: 0.82rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.universe-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.universe-table tbody tr.is-selected {
+  background: rgba(143, 194, 255, 0.12);
+}
+
+.universe-table tbody tr.is-selected:hover {
+  background: rgba(143, 194, 255, 0.16);
+}
+
+.universe-table tbody tr {
+  cursor: pointer;
+}
+
+.universe-row-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #8fc2ff;
+}
+
+.universe-empty {
+  color: var(--muted);
+}
+
+.symbol-cell {
+  font-weight: 600;
+}
+
+.table-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.exchange-trading {
+  color: var(--success);
+  background: rgba(116, 212, 155, 0.14);
+}
+
+.exchange-missing {
+  color: var(--danger);
+  background: rgba(239, 111, 108, 0.14);
+}
+
+.exchange-pending,
+.exchange-unknown {
+  color: var(--accent);
+  background: rgba(241, 178, 74, 0.14);
+}
+
+.universe-status-select {
+  min-width: 150px;
 }
 
 .evaluation-item.good {

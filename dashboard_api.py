@@ -20,6 +20,11 @@ from candle_loader import candle_loader_service
 from manual_trading import get_manual_order_context, place_manual_order
 from platform_control import get_supervisor_status, start_supervisor_task, stop_supervisor_task
 from runtime_state import get_live_kline_window, snapshot_runtime_state
+from symbols_registry import (
+    ALLOWED_PROJECT_STATUSES,
+    list_registry_symbols,
+    update_symbol_project_status,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "dashboard_static"
@@ -107,6 +112,55 @@ async def api_market_symbols():
             {"symbol": symbol, **symbol_states.get(symbol, {})}
             for symbol in runtime.get("pending_symbols", [])
         ],
+    }
+
+
+@app.get("/api/universe/symbols")
+async def api_universe_symbols():
+    return {
+        "items": list_registry_symbols(),
+        "allowed_project_statuses": sorted(ALLOWED_PROJECT_STATUSES),
+    }
+
+
+@app.post("/api/universe/symbols/{symbol}/status")
+async def api_universe_update_symbol_status(symbol: str, payload: dict = Body(default={})):
+    project_status = payload.get("project_status")
+    if project_status is None:
+        raise HTTPException(status_code=400, detail="project_status is required")
+
+    try:
+        item = update_symbol_project_status(symbol, str(project_status))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "item": item,
+        "allowed_project_statuses": sorted(ALLOWED_PROJECT_STATUSES),
+    }
+
+
+@app.post("/api/universe/symbols/status")
+async def api_universe_bulk_update_symbol_status(payload: dict = Body(default={})):
+    project_status = payload.get("project_status")
+    symbols = payload.get("symbols")
+
+    if project_status is None:
+        raise HTTPException(status_code=400, detail="project_status is required")
+    if not isinstance(symbols, list) or not symbols:
+        raise HTTPException(status_code=400, detail="symbols must be a non-empty list")
+
+    updated_items = []
+    try:
+        for symbol in symbols:
+            updated_items.append(update_symbol_project_status(str(symbol), str(project_status)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "items": updated_items,
+        "updated_count": len(updated_items),
+        "allowed_project_statuses": sorted(ALLOWED_PROJECT_STATUSES),
     }
 
 

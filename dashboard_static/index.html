@@ -122,6 +122,24 @@
           </div>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Market Batches</h2>
+          <span id="market-batches-count" class="pill">0</span>
+        </div>
+        <div id="market-batches-summary" class="muted">No active market batches</div>
+        <div id="market-batches-list" class="batch-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Weak Batches</h2>
+          <span id="weak-batches-count" class="pill">0</span>
+        </div>
+        <div id="weak-batches-summary" class="muted">No weak isolated batches</div>
+        <div id="weak-batches-list" class="batch-list"></div>
+      </section>
     </aside>
 
     <main class="workspace">
@@ -370,6 +388,43 @@
       </section>
 
       <section class="bottom-grid">
+        <section class="panel universe-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">Project Registry</div>
+              <h2>Universe</h2>
+            </div>
+            <span id="universe-count" class="pill">0</span>
+          </div>
+          <div class="universe-toolbar">
+            <input id="universe-search" type="text" placeholder="Filter symbols...">
+            <select id="universe-status-filter">
+              <option value="ALL">All statuses</option>
+            </select>
+            <span id="universe-selected-count" class="pill universe-selected-pill">0 selected</span>
+            <select id="universe-bulk-status">
+              <option value="">Bulk status...</option>
+            </select>
+            <button id="universe-apply-bulk-status" type="button">Apply</button>
+          </div>
+          <div class="universe-table-wrap">
+            <table class="universe-table">
+              <thead>
+                <tr>
+                  <th class="universe-check-cell">
+                    <input id="universe-select-all" type="checkbox" aria-label="Select all filtered symbols">
+                  </th>
+                  <th>Symbol</th>
+                  <th>Exchange</th>
+                  <th>Project</th>
+                  <th>Seen</th>
+                </tr>
+              </thead>
+              <tbody id="universe-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="panel rule-panel">
           <div class="panel-head">
             <div>

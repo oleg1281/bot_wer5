@@ -8,7 +8,18 @@ from collector import collector
 from config import api_key, api_secret
 from history_sync import history_sync_service
 from logger_setup import setup_logger
-from runtime_state import get_symbol_state, update_overview, update_symbol_lists, update_symbol_state
+from runtime_state import (
+    get_symbol_state,
+    update_overview,
+    update_stream_batches,
+    update_symbol_lists,
+    update_symbol_state,
+)
+from symbols_registry import (
+    get_active_trading_symbols,
+    get_pending_registry_symbols,
+    sync_symbols_registry,
+)
 from stream_closed_candle_writer import stream_closed_candle_writer
 from workers import (
     MARKET_BATCH_SIZE,
@@ -41,7 +52,7 @@ EXCLUDED_PAIRS = {
     "ETHUSDT_250328",
     "BTCUSDT_250328",
 }
-ALLOWED_QUOTE_ASSETS = {"USDT", "USDC"}
+ALLOWED_QUOTE_ASSETS = {"USDT"}
 
 
 class TaskInfo:
@@ -218,6 +229,8 @@ async def fetch_exchange_symbol_metadata(client) -> dict[str, dict]:
         onboard_time = int(symbol_info.get("onboardDate") or 0)
         symbol_metadata[symbol] = {
             "status": symbol_info.get("status", "UNKNOWN"),
+            "quote_asset": symbol_info.get("quoteAsset"),
+            "contract_type": symbol_info.get("contractType"),
             "onboard_time": onboard_time - (onboard_time % 60_000)
             if onboard_time > 0
             else 0,
@@ -251,6 +264,22 @@ def build_weak_task_specs(pairs: list[str], queue: asyncio.Queue, client):
     return specs
 
 
+def build_batch_runtime_items(tasks: dict[str, TaskInfo]) -> list[dict]:
+    items: list[dict] = []
+    for name, task in sorted(tasks.items()):
+        symbols = extract_batch_symbols(task)
+        items.append(
+            {
+                "name": name,
+                "symbol_count": len(symbols),
+                "symbols": symbols,
+                "active": bool(not task.blocked and task.task and not task.task.done()),
+                "blocked": bool(task.blocked),
+            }
+        )
+    return items
+
+
 async def reconcile_tasks(tasks: dict[str, TaskInfo], desired_specs: dict[str, tuple]):
     current_names = set(tasks.keys())
     desired_names = set(desired_specs.keys())
@@ -276,6 +305,29 @@ async def reconcile_tasks(tasks: dict[str, TaskInfo], desired_specs: dict[str, t
         tasks[name] = TaskInfo(name, worker_func, worker_args, allow_blocking=False)
         await tasks[name].start(reason="rebalance")
         await asyncio.sleep(0.3)
+
+
+async def reconcile_single_task(task: TaskInfo | None, name: str, desired_spec: tuple | None) -> TaskInfo | None:
+    if desired_spec is None:
+        if task is not None:
+            await task.stop()
+        return None
+
+    worker_func, worker_args = desired_spec
+    if task is None:
+        task = TaskInfo(name, worker_func, worker_args, allow_blocking=False)
+        await task.start(reason="new")
+        return task
+
+    if task.worker_func is worker_func and task.worker_args == worker_args:
+        return task
+
+    previous_runtime_state = task.runtime_state
+    await task.stop()
+    task = TaskInfo(name, worker_func, worker_args, allow_blocking=False)
+    task.runtime_state = previous_runtime_state
+    await task.start(reason="rebalance")
+    return task
 
 
 def initialize_pair_watch(pair_activity: dict[str, dict], pairs: list[str], now: float):
@@ -418,11 +470,14 @@ async def supervisor():
         await user_tasks["user-stream"].start(reason="new")
 
         known_symbol_metadata = await fetch_exchange_symbol_metadata(client)
+        sync_symbols_registry(known_symbol_metadata)
+        current_status_trading_pairs = get_active_trading_symbols()
+        current_pending_status_pairs = get_pending_registry_symbols()
         await history_sync_service.update_targets(
             {
                 symbol: meta.get("onboard_time", 0)
                 for symbol, meta in known_symbol_metadata.items()
-                if meta.get("status") == "TRADING"
+                if symbol in set(current_status_trading_pairs)
             }
         )
 
@@ -455,6 +510,7 @@ async def supervisor():
 
             if should_refresh_status:
                 known_symbol_metadata = await fetch_exchange_symbol_metadata(client)
+                sync_symbols_registry(known_symbol_metadata)
                 next_status_refresh_at = now + STATUS_REFRESH_INTERVAL
 
                 if should_log_full_refresh:
@@ -463,7 +519,8 @@ async def supervisor():
                         f"Full symbol universe refreshed: total_known_symbols={len(known_symbol_metadata)}"
                     )
 
-            status_trading_pairs, pending_status_pairs = split_symbols_by_status(known_symbol_metadata)
+            status_trading_pairs = get_active_trading_symbols()
+            pending_status_pairs = get_pending_registry_symbols()
             status_trading_set = set(status_trading_pairs)
             pending_status_set = set(pending_status_pairs)
 
@@ -537,15 +594,11 @@ async def supervisor():
 
             await reconcile_tasks(market_tasks, desired_market_specs)
             await reconcile_tasks(weak_tasks, desired_weak_specs)
-
-            if book_task is None:
-                book_task = TaskInfo(
-                    "book-stream",
-                    all_book_ticker_worker,
-                    [[], queue, client, "book-stream"],
-                    allow_blocking=False,
-                )
-                await book_task.start(reason="new")
+            desired_book_spec = (
+                all_book_ticker_worker,
+                [ready_pairs, queue, client, "book-stream"],
+            ) if ready_pairs else None
+            book_task = await reconcile_single_task(book_task, "book-stream", desired_book_spec)
 
             newly_pending_status_pairs = sorted(
                 pending_status_set - previous_pending_status_pairs
@@ -644,6 +697,10 @@ async def supervisor():
                 tracked_symbols=current_status_trading_pairs,
                 pending_symbols=current_pending_status_pairs,
             )
+            update_stream_batches(
+                market_batches=build_batch_runtime_items(market_tasks),
+                weak_batches=build_batch_runtime_items(weak_tasks),
+            )
 
             for symbol in current_status_trading_pairs:
                 pair_state = pair_activity.get(symbol, {})
@@ -689,7 +746,7 @@ async def supervisor():
     finally:
         await asyncio.gather(
             *(t.stop() for t in list(market_tasks.values())),
-            *( [book_task.stop()] if book_task else [] ),
+            *([book_task.stop()] if book_task else []),
             *(t.stop() for t in list(weak_tasks.values())),
             *(t.stop() for t in list(user_tasks.values())),
             return_exceptions=True,

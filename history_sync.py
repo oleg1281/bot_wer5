@@ -177,13 +177,17 @@ class HistorySyncService:
 
     async def update_targets(self, symbol_onboard_times: dict[str, int]) -> None:
         async with self._lock:
+            previous_target_symbols = set(self._target_symbols.keys())
             self._target_symbols = dict(symbol_onboard_times)
             self._pending_symbols.intersection_update(symbol_onboard_times.keys())
             for symbol in symbol_onboard_times:
                 symbol_state = get_symbol_state(symbol)
+                newly_enabled_target = symbol not in previous_target_symbols
                 should_enqueue = (
                     symbol not in self._pending_symbols
                     and (
+                        newly_enabled_target
+                        or
                         symbol not in self._processed_symbols
                         or not bool(symbol_state.get("history_ready"))
                         or symbol_state.get("history_status") in {"pending", "partial", "desynced", "error"}

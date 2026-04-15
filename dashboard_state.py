@@ -165,6 +165,7 @@ def get_strategy_builder_state() -> dict:
     runtime = snapshot_runtime_state()
     tracked_symbols = runtime.get("tracked_symbols", [])
     symbol_states = runtime.get("symbol_states", {})
+    stream_batches = runtime.get("stream_batches", {})
     tracked_symbol_states = [
         {
             "symbol": symbol,
@@ -259,6 +260,10 @@ def get_strategy_builder_state() -> dict:
         "pending_symbols": runtime.get("pending_symbols", []),
         "tracked_symbol_states": tracked_symbol_states,
         "pending_symbol_states": pending_symbol_states,
+        "stream_batches": {
+            "market": stream_batches.get("market", []),
+            "weak": stream_batches.get("weak", []),
+        },
         "candle_loader": runtime.get("candle_loader", {}),
     }
 

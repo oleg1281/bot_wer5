@@ -11,6 +11,10 @@ const state = {
   filteredSymbolOptions: [],
   activeSymbolIndex: -1,
   symbolQuery: "",
+  universe: null,
+  universeFilter: "",
+  universeStatusFilter: "ALL",
+  universeSelectedSymbols: [],
 };
 
 const OVERVIEW_STREAM_HISTORY_LIMIT = 90;
@@ -95,6 +99,15 @@ function setText(id, value) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function renderBookWsMetrics(overview) {
   const bookWsQueueLimit = Number(overview?.book_ws_queue_limit);
   const bookWsOverflowCount = Number(overview?.book_ws_overflow_count);
@@ -171,6 +184,275 @@ function renderOverview(overview) {
   const isRunning = overview.bot_status === "running" || overview.bot_status === "starting" || overview.bot_status === "degraded";
   startButton.disabled = isRunning;
   stopButton.disabled = !isRunning;
+}
+
+function formatRegistrySeen(isoTime) {
+  if (!isoTime) {
+    return "-";
+  }
+  return formatAgo(new Date(isoTime).getTime());
+}
+
+function getUniverseFilteredItems() {
+  const items = state.universe?.items || [];
+  const query = String(state.universeFilter || "").trim().toUpperCase();
+  const statusFilter = String(state.universeStatusFilter || "ALL").trim().toUpperCase();
+
+  return items.filter((item) => {
+    const matchesQuery = !query || String(item.symbol || "").toUpperCase().includes(query);
+    const matchesStatus = statusFilter === "ALL"
+      || String(item.project_status || "").toUpperCase() === statusFilter;
+    return matchesQuery && matchesStatus;
+  });
+}
+
+function renderUniverseStatusFilter() {
+  const filterNode = document.getElementById("universe-status-filter");
+  if (!filterNode) {
+    return;
+  }
+
+  const allowedStatuses = state.universe?.allowed_project_statuses || ["ACTIVE", "DISABLED"];
+  const currentValue = state.universeStatusFilter || "ALL";
+  filterNode.innerHTML = [
+    `<option value="ALL">All statuses</option>`,
+    ...allowedStatuses.map((status) => `<option value="${status}">${status}</option>`),
+  ].join("");
+  filterNode.value = allowedStatuses.includes(currentValue) || currentValue === "ALL"
+    ? currentValue
+    : "ALL";
+}
+
+function pruneUniverseSelection() {
+  const knownSymbols = new Set((state.universe?.items || []).map((item) => String(item.symbol || "")));
+  state.universeSelectedSymbols = (state.universeSelectedSymbols || []).filter((symbol) => knownSymbols.has(symbol));
+}
+
+function toggleUniverseSymbolSelection(symbol, isSelected) {
+  const symbolName = String(symbol || "");
+  if (!symbolName) {
+    return;
+  }
+  const selectedSet = new Set(state.universeSelectedSymbols || []);
+  if (isSelected) {
+    selectedSet.add(symbolName);
+  } else {
+    selectedSet.delete(symbolName);
+  }
+  state.universeSelectedSymbols = Array.from(selectedSet).sort();
+}
+
+function toggleUniverseFilteredSelection(isSelected) {
+  const selectedSet = new Set(state.universeSelectedSymbols || []);
+  getUniverseFilteredItems().forEach((item) => {
+    const symbolName = String(item.symbol || "");
+    if (!symbolName) {
+      return;
+    }
+    if (isSelected) {
+      selectedSet.add(symbolName);
+    } else {
+      selectedSet.delete(symbolName);
+    }
+  });
+  state.universeSelectedSymbols = Array.from(selectedSet).sort();
+}
+
+function renderUniverseBulkControls() {
+  const bulkStatusNode = document.getElementById("universe-bulk-status");
+  const selectedCountNode = document.getElementById("universe-selected-count");
+  const applyButton = document.getElementById("universe-apply-bulk-status");
+  const selectAllNode = document.getElementById("universe-select-all");
+  const allowedStatuses = state.universe?.allowed_project_statuses || ["ACTIVE", "DISABLED"];
+  const filteredItems = getUniverseFilteredItems();
+  const filteredSymbols = filteredItems.map((item) => String(item.symbol || ""));
+  const selectedSet = new Set(state.universeSelectedSymbols || []);
+  const selectedFilteredCount = filteredSymbols.filter((symbol) => selectedSet.has(symbol)).length;
+  const totalSelectedCount = selectedSet.size;
+
+  if (bulkStatusNode) {
+    const currentValue = bulkStatusNode.value || "";
+    bulkStatusNode.innerHTML = [
+      `<option value="">Bulk status...</option>`,
+      ...allowedStatuses.map((status) => `<option value="${status}">${status}</option>`),
+    ].join("");
+    bulkStatusNode.value = allowedStatuses.includes(currentValue) ? currentValue : "";
+    bulkStatusNode.disabled = totalSelectedCount === 0;
+  }
+
+  if (selectedCountNode) {
+    selectedCountNode.textContent = `${totalSelectedCount} selected`;
+  }
+
+  if (applyButton) {
+    applyButton.disabled = totalSelectedCount === 0 || !(bulkStatusNode && bulkStatusNode.value);
+  }
+
+  if (selectAllNode) {
+    const hasFilteredItems = filteredSymbols.length > 0;
+    selectAllNode.checked = hasFilteredItems && selectedFilteredCount === filteredSymbols.length;
+    selectAllNode.indeterminate = selectedFilteredCount > 0 && selectedFilteredCount < filteredSymbols.length;
+    selectAllNode.disabled = !hasFilteredItems;
+  }
+}
+
+async function applyUniverseBulkStatus() {
+  const bulkStatusNode = document.getElementById("universe-bulk-status");
+  const targetStatus = String(bulkStatusNode?.value || "").trim().toUpperCase();
+  const selectedSymbols = [...new Set(state.universeSelectedSymbols || [])];
+  if (!targetStatus || !selectedSymbols.length) {
+    return;
+  }
+
+  const applyButton = document.getElementById("universe-apply-bulk-status");
+  if (bulkStatusNode) {
+    bulkStatusNode.disabled = true;
+  }
+  if (applyButton) {
+    applyButton.disabled = true;
+  }
+
+  try {
+    await postJson("/api/universe/symbols/status", {
+      symbols: selectedSymbols,
+      project_status: targetStatus,
+    });
+    state.universeSelectedSymbols = [];
+    if (bulkStatusNode) {
+      bulkStatusNode.value = "";
+    }
+    await Promise.all([
+      refreshUniverse(),
+      refreshBuilderState(),
+    ]);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    renderUniverseBulkControls();
+  }
+}
+
+function renderUniverse() {
+  const body = document.getElementById("universe-table-body");
+  if (!body) {
+    return;
+  }
+
+  pruneUniverseSelection();
+  renderUniverseStatusFilter();
+  const items = getUniverseFilteredItems();
+  const allowedStatuses = state.universe?.allowed_project_statuses || ["ACTIVE", "DISABLED"];
+  const selectedSet = new Set(state.universeSelectedSymbols || []);
+  setText("universe-count", String(items.length));
+  body.innerHTML = "";
+
+  if (!items.length) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td colspan="5" class="universe-empty">No symbols found</td>`;
+    body.appendChild(row);
+    renderUniverseBulkControls();
+    return;
+  }
+
+  items.forEach((item) => {
+    const row = document.createElement("tr");
+    const symbolName = String(item.symbol || "");
+    row.dataset.symbol = symbolName;
+    if (selectedSet.has(symbolName)) {
+      row.classList.add("is-selected");
+    }
+    const exchangeStatus = String(item.exchange_status || "UNKNOWN");
+    const exchangeTone = exchangeStatus === "TRADING"
+      ? "exchange-trading"
+      : (exchangeStatus === "MISSING" ? "exchange-missing" : "exchange-pending");
+    const optionsHtml = allowedStatuses
+      .map(status => `<option value="${status}"${status === item.project_status ? " selected" : ""}>${status}</option>`)
+      .join("");
+
+    row.innerHTML = `
+      <td class="universe-check-cell">
+        <input
+          class="universe-row-checkbox"
+          type="checkbox"
+          data-symbol="${escapeHtml(item.symbol)}"
+          ${selectedSet.has(symbolName) ? "checked" : ""}
+          aria-label="Select ${escapeHtml(item.symbol)}"
+        >
+      </td>
+      <td class="symbol-cell">${escapeHtml(item.symbol)}</td>
+      <td><span class="table-badge ${exchangeTone}">${escapeHtml(exchangeStatus)}</span></td>
+      <td>
+        <select class="universe-status-select" data-symbol="${escapeHtml(item.symbol)}">
+          ${optionsHtml}
+        </select>
+      </td>
+      <td>${escapeHtml(formatRegistrySeen(item.last_seen_on_exchange_at))}</td>
+    `;
+    body.appendChild(row);
+  });
+
+  body.querySelectorAll("tr[data-symbol]").forEach((rowNode) => {
+    rowNode.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target.closest(".universe-status-select")) {
+        return;
+      }
+      const symbol = rowNode.dataset.symbol;
+      const checkbox = rowNode.querySelector(".universe-row-checkbox");
+      if (!checkbox || !symbol) {
+        return;
+      }
+      const nextChecked = !checkbox.checked;
+      checkbox.checked = nextChecked;
+      toggleUniverseSymbolSelection(symbol, nextChecked);
+      renderUniverseBulkControls();
+    });
+  });
+
+  body.querySelectorAll(".universe-row-checkbox").forEach((checkboxNode) => {
+    checkboxNode.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    checkboxNode.addEventListener("change", (event) => {
+      const checkbox = event.target;
+      event.stopPropagation();
+      toggleUniverseSymbolSelection(checkbox.dataset.symbol, Boolean(checkbox.checked));
+      renderUniverse();
+    });
+  });
+
+  body.querySelectorAll(".universe-status-select").forEach((selectNode) => {
+    selectNode.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    selectNode.addEventListener("change", async (event) => {
+      const select = event.target;
+      const symbol = select.dataset.symbol;
+      const projectStatus = select.value;
+      select.disabled = true;
+      try {
+        await postJson(`/api/universe/symbols/${encodeURIComponent(symbol)}/status`, {
+          project_status: projectStatus,
+        });
+        await Promise.all([
+          refreshUniverse(),
+          refreshBuilderState(),
+        ]);
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        select.disabled = false;
+      }
+    });
+  });
+
+  renderUniverseBulkControls();
+}
+
+async function refreshUniverse() {
+  const universe = await fetchJson("/api/universe/symbols");
+  state.universe = universe;
+  renderUniverse();
 }
 
 function addOverviewStreamSample(overview) {
@@ -292,6 +574,75 @@ function renderCandleLoader(loader) {
   }
 }
 
+function renderMarketBatches(builder) {
+  const batches = builder?.stream_batches?.market || [];
+  const weakBatches = builder?.stream_batches?.weak || [];
+  const countNode = document.getElementById("market-batches-count");
+  const summaryNode = document.getElementById("market-batches-summary");
+  const listNode = document.getElementById("market-batches-list");
+  const weakCountNode = document.getElementById("weak-batches-count");
+  const weakSummaryNode = document.getElementById("weak-batches-summary");
+  const weakListNode = document.getElementById("weak-batches-list");
+  if (!countNode || !summaryNode || !listNode) {
+    return;
+  }
+
+  countNode.textContent = String(batches.length);
+
+  if (!batches.length) {
+    summaryNode.textContent = "No active market batches";
+    listNode.innerHTML = "";
+  } else {
+    const pairCount = batches.reduce((sum, item) => sum + Number(item.symbol_count || 0), 0);
+    summaryNode.textContent = `${pairCount} pairs in market batches${weakBatches.length ? `, weak isolated: ${weakBatches.length}` : ""}`;
+
+    listNode.innerHTML = "";
+    for (const batch of batches) {
+      const card = document.createElement("article");
+      card.className = "batch-card";
+      const symbols = Array.isArray(batch.symbols) ? batch.symbols : [];
+      card.innerHTML = `
+        <header class="batch-card-head">
+          <strong>${escapeHtml(batch.name || "market-batch")}</strong>
+          <span class="tag">${Number(batch.symbol_count || symbols.length)} pairs</span>
+        </header>
+        <div class="muted">${batch.blocked ? "blocked" : (batch.active ? "active" : "idle")}</div>
+        <div class="batch-symbols">${symbols.length ? escapeHtml(symbols.join(", ")) : "-"}</div>
+      `;
+      listNode.appendChild(card);
+    }
+  }
+
+  if (weakCountNode) {
+    weakCountNode.textContent = String(weakBatches.length);
+  }
+  if (weakSummaryNode) {
+    if (!weakBatches.length) {
+      weakSummaryNode.textContent = "No weak isolated batches";
+    } else {
+      const weakPairCount = weakBatches.reduce((sum, item) => sum + Number(item.symbol_count || 0), 0);
+      weakSummaryNode.textContent = `${weakPairCount} pairs in weak isolated batches`;
+    }
+  }
+  if (weakListNode) {
+    weakListNode.innerHTML = "";
+    for (const batch of weakBatches) {
+      const card = document.createElement("article");
+      card.className = "batch-card";
+      const symbols = Array.isArray(batch.symbols) ? batch.symbols : [];
+      card.innerHTML = `
+        <header class="batch-card-head">
+          <strong>${escapeHtml(batch.name || "weak-batch")}</strong>
+          <span class="tag">${Number(batch.symbol_count || symbols.length)} pairs</span>
+        </header>
+        <div class="muted">${batch.blocked ? "blocked" : (batch.active ? "active" : "idle")}</div>
+        <div class="batch-symbols">${symbols.length ? escapeHtml(symbols.join(", ")) : "-"}</div>
+      `;
+      weakListNode.appendChild(card);
+    }
+  }
+}
+
 function renderStrategies(builder) {
   const list = document.getElementById("strategy-list");
   list.innerHTML = "";
@@ -343,6 +694,7 @@ function renderBuilder(builder) {
   renderStrategies(builder);
   populateSymbolSelect(builder);
   renderCandleLoader(builder.candle_loader);
+  renderMarketBatches(builder);
 
   const tree = document.getElementById("rule-tree");
   tree.innerHTML = "";
@@ -511,6 +863,18 @@ function populateSymbolSelect(builder) {
     }
   }
 
+  const registrySymbols = (state.universe?.items || []).map(item => ({
+    ...item,
+    symbol: item.symbol,
+    kind: String(item.project_status || "").toUpperCase() === "DISABLED" ? "disabled" : "registry",
+  }));
+
+  for (const registryItem of registrySymbols) {
+    if (!state.symbolOptions.some(option => option.symbol === registryItem.symbol)) {
+      state.symbolOptions.push(registryItem);
+    }
+  }
+
   const btcExists = state.symbolOptions.some(option => option.symbol === "BTCUSDT");
   const selected = state.chart?.symbol || (btcExists ? "BTCUSDT" : (builder.strategy.selected_symbol || state.symbolOptions[0].symbol));
   const input = document.getElementById("symbol-input");
@@ -532,11 +896,21 @@ function populateSymbolSelect(builder) {
 }
 
 function getSymbolAvailability(option) {
+  if (String(option.project_status || "").toUpperCase() === "DISABLED" || option.kind === "disabled") {
+    return {
+      dotClass: "idle",
+      statusLabel: "disabled",
+      detailLabel: "disabled in project registry",
+    };
+  }
+
   if (option.kind !== "tracked") {
     return {
       dotClass: "idle",
-      statusLabel: "pending status",
-      detailLabel: "exchange not in TRADING yet",
+      statusLabel: option.kind === "registry" ? "registry only" : "pending status",
+      detailLabel: option.kind === "registry"
+        ? "available in registry, not active in runtime"
+        : "exchange not in TRADING yet",
     };
   }
 
@@ -1207,10 +1581,11 @@ function renderChart(chart) {
 }
 
 async function loadBuilder(symbol = "BTCUSDT", timeframe = "1m") {
-  const [overview, builder, account] = await Promise.all([
+  const [overview, builder, account, universe] = await Promise.all([
     fetchJson("/api/system/overview"),
     fetchJson("/api/strategy/builder"),
     fetchJson("/api/account/state"),
+    fetchJson("/api/universe/symbols"),
   ]);
   const trackedSymbols = (builder.tracked_symbol_states || []).map(item => item.symbol);
   const selectedSymbol = trackedSymbols?.includes("BTCUSDT")
@@ -1227,11 +1602,13 @@ async function loadBuilder(symbol = "BTCUSDT", timeframe = "1m") {
   state.liveWindow = null;
   state.manualContext = null;
   state.manualOrderResult = null;
+  state.universe = universe;
 
   renderOverview(overview);
   addOverviewStreamSample(overview);
   renderOverviewStreamChart();
   renderBuilder(builder);
+  renderUniverse();
   renderChart(chart);
   await refreshLiveWindow(selectedSymbol);
   await refreshManualOrderContext(selectedSymbol);
@@ -1274,6 +1651,11 @@ function bindControls() {
   const combobox = document.getElementById("symbol-combobox");
   const symbolInput = document.getElementById("symbol-input");
   const symbolToggle = document.getElementById("symbol-toggle");
+  const universeSearch = document.getElementById("universe-search");
+  const universeStatusFilter = document.getElementById("universe-status-filter");
+  const universeSelectAll = document.getElementById("universe-select-all");
+  const universeBulkStatus = document.getElementById("universe-bulk-status");
+  const universeApplyBulkStatus = document.getElementById("universe-apply-bulk-status");
   const timeframeSelect = document.getElementById("timeframe-select");
   const loaderSave = document.getElementById("loader-save");
   const loaderStart = document.getElementById("loader-start");
@@ -1373,6 +1755,29 @@ function bindControls() {
     if (!combobox.contains(event.target)) {
       combobox.classList.remove("open");
     }
+  });
+
+  universeSearch?.addEventListener("input", () => {
+    state.universeFilter = universeSearch.value || "";
+    renderUniverse();
+  });
+
+  universeStatusFilter?.addEventListener("change", () => {
+    state.universeStatusFilter = universeStatusFilter.value || "ALL";
+    renderUniverse();
+  });
+
+  universeSelectAll?.addEventListener("change", () => {
+    toggleUniverseFilteredSelection(Boolean(universeSelectAll.checked));
+    renderUniverse();
+  });
+
+  universeBulkStatus?.addEventListener("change", () => {
+    renderUniverseBulkControls();
+  });
+
+  universeApplyBulkStatus?.addEventListener("click", async () => {
+    await applyUniverseBulkStatus();
   });
 
   loaderSave.addEventListener("click", async () => {
@@ -1478,6 +1883,9 @@ async function main() {
   }, 3000);
   setInterval(() => {
     refreshBuilderState().catch((error) => console.error(error));
+  }, 5000);
+  setInterval(() => {
+    refreshUniverse().catch((error) => console.error(error));
   }, 5000);
   setInterval(() => {
     refreshAccountState()

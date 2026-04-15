@@ -58,6 +58,10 @@ RUNTIME_STATE = {
     "tracked_symbols": [],
     "pending_symbols": [],
     "symbol_states": {},
+    "stream_batches": {
+        "market": [],
+        "weak": [],
+    },
     "candle_loader": {
         "status": "idle",
         "running": False,
@@ -116,6 +120,15 @@ def update_symbol_lists(*, tracked_symbols=None, pending_symbols=None) -> None:
         RUNTIME_STATE["tracked_symbols"] = list(tracked_symbols)
     if pending_symbols is not None:
         RUNTIME_STATE["pending_symbols"] = list(pending_symbols)
+    RUNTIME_STATE["overview"]["updated_at"] = _stamp()
+
+
+def update_stream_batches(*, market_batches=None, weak_batches=None) -> None:
+    stream_batches = RUNTIME_STATE.setdefault("stream_batches", {"market": [], "weak": []})
+    if market_batches is not None:
+        stream_batches["market"] = deepcopy(list(market_batches))
+    if weak_batches is not None:
+        stream_batches["weak"] = deepcopy(list(weak_batches))
     RUNTIME_STATE["overview"]["updated_at"] = _stamp()
 
 
