@@ -576,10 +576,14 @@ function renderCandleLoader(loader) {
 
 function renderMarketBatches(builder) {
   const batches = builder?.stream_batches?.market || [];
+  const bookBatches = builder?.stream_batches?.book || [];
   const weakBatches = builder?.stream_batches?.weak || [];
   const countNode = document.getElementById("market-batches-count");
   const summaryNode = document.getElementById("market-batches-summary");
   const listNode = document.getElementById("market-batches-list");
+  const bookCountNode = document.getElementById("book-batches-count");
+  const bookSummaryNode = document.getElementById("book-batches-summary");
+  const bookListNode = document.getElementById("book-batches-list");
   const weakCountNode = document.getElementById("weak-batches-count");
   const weakSummaryNode = document.getElementById("weak-batches-summary");
   const weakListNode = document.getElementById("weak-batches-list");
@@ -610,6 +614,35 @@ function renderMarketBatches(builder) {
         <div class="batch-symbols">${symbols.length ? escapeHtml(symbols.join(", ")) : "-"}</div>
       `;
       listNode.appendChild(card);
+    }
+  }
+
+  if (bookCountNode) {
+    bookCountNode.textContent = String(bookBatches.length);
+  }
+  if (bookSummaryNode) {
+    if (!bookBatches.length) {
+      bookSummaryNode.textContent = "No active book batches";
+    } else {
+      const bookPairCount = bookBatches.reduce((sum, item) => sum + Number(item.symbol_count || 0), 0);
+      bookSummaryNode.textContent = `${bookPairCount} pairs in book batches`;
+    }
+  }
+  if (bookListNode) {
+    bookListNode.innerHTML = "";
+    for (const batch of bookBatches) {
+      const card = document.createElement("article");
+      card.className = "batch-card";
+      const symbols = Array.isArray(batch.symbols) ? batch.symbols : [];
+      card.innerHTML = `
+        <header class="batch-card-head">
+          <strong>${escapeHtml(batch.name || "book-batch")}</strong>
+          <span class="tag">${Number(batch.symbol_count || symbols.length)} pairs</span>
+        </header>
+        <div class="muted">${batch.blocked ? "blocked" : (batch.active ? "active" : "idle")}</div>
+        <div class="batch-symbols">${symbols.length ? escapeHtml(symbols.join(", ")) : "-"}</div>
+      `;
+      bookListNode.appendChild(card);
     }
   }
 

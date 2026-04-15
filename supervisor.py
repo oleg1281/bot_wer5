@@ -23,8 +23,8 @@ from symbols_registry import (
 from stream_closed_candle_writer import stream_closed_candle_writer
 from workers import (
     MARKET_BATCH_SIZE,
-    all_book_ticker_worker,
     multiplex_market_worker,
+    multiplex_book_ticker_worker,
     user_stream_worker,
 )
 
@@ -133,6 +133,15 @@ class MarketBatchCoordinator:
     def update(self, pairs: list[str], now: float) -> None:
         desired_set = set(pairs)
 
+        self._stable_batches = [
+            {
+                **batch,
+                "symbols": [symbol for symbol in batch["symbols"] if symbol in desired_set],
+            }
+            for batch in self._stable_batches
+        ]
+        self._stable_batches = [batch for batch in self._stable_batches if batch["symbols"]]
+
         if self._staging_batch is not None:
             self._staging_batch["symbols"] = [
                 symbol for symbol in self._staging_batch["symbols"] if symbol in desired_set
@@ -173,6 +182,87 @@ class MarketBatchCoordinator:
             for symbol in batch["symbols"]:
                 mapping[symbol] = batch["name"]
         return mapping
+
+
+class BookBatchCoordinator:
+    def __init__(self, batch_size: int, freeze_seconds: int) -> None:
+        self.batch_size = batch_size
+        self.freeze_seconds = freeze_seconds
+        self._stable_batches: list[dict] = []
+        self._staging_batch: dict | None = None
+        self._next_batch_index = 1
+
+    def _make_batch(self, now: float) -> dict:
+        name = f"book-batch-{self._next_batch_index:02d}"
+        self._next_batch_index += 1
+        return {
+            "name": name,
+            "symbols": [],
+            "created_at": now,
+        }
+
+    def _promote_staging_if_needed(self, now: float) -> None:
+        if not self._staging_batch:
+            return
+
+        symbols = self._staging_batch["symbols"]
+        created_at = float(self._staging_batch["created_at"])
+        if not symbols:
+            self._staging_batch = None
+            return
+
+        if len(symbols) >= self.batch_size or (now - created_at) >= self.freeze_seconds:
+            self._stable_batches.append(self._staging_batch)
+            self._staging_batch = None
+
+    def update(self, pairs: list[str], now: float) -> None:
+        desired_set = set(pairs)
+
+        self._stable_batches = [
+            {
+                **batch,
+                "symbols": [symbol for symbol in batch["symbols"] if symbol in desired_set],
+            }
+            for batch in self._stable_batches
+        ]
+        self._stable_batches = [batch for batch in self._stable_batches if batch["symbols"]]
+
+        if self._staging_batch is not None:
+            self._staging_batch["symbols"] = [
+                symbol for symbol in self._staging_batch["symbols"] if symbol in desired_set
+            ]
+            if not self._staging_batch["symbols"]:
+                self._staging_batch = None
+
+        self._promote_staging_if_needed(now)
+
+        assigned_symbols = {
+            symbol
+            for batch in self._stable_batches
+            for symbol in batch["symbols"]
+        }
+        if self._staging_batch is not None:
+            assigned_symbols.update(self._staging_batch["symbols"])
+
+        new_symbols = [symbol for symbol in pairs if symbol not in assigned_symbols]
+        for symbol in new_symbols:
+            if self._staging_batch is None:
+                self._staging_batch = self._make_batch(now)
+
+            self._staging_batch["symbols"].append(symbol)
+            if len(self._staging_batch["symbols"]) >= self.batch_size:
+                self._promote_staging_if_needed(now)
+
+        self._promote_staging_if_needed(now)
+
+    def build_task_specs(self, queue: asyncio.Queue, client) -> dict[str, tuple]:
+        specs: dict[str, tuple] = {}
+        for batch in self._stable_batches:
+            specs[batch["name"]] = (
+                multiplex_book_ticker_worker,
+                [list(batch["symbols"]), queue, client, batch["name"]],
+            )
+        return specs
 
 
 async def check_network():
@@ -431,7 +521,7 @@ def evaluate_weak_recoveries(
 
 async def supervisor():
     market_tasks: dict[str, TaskInfo] = {}
-    book_task: TaskInfo | None = None
+    book_tasks: dict[str, TaskInfo] = {}
     weak_tasks: dict[str, TaskInfo] = {}
     user_tasks: dict[str, TaskInfo] = {}
     queue = asyncio.Queue()
@@ -448,6 +538,10 @@ async def supervisor():
     weak_pairs: set[str] = set()
     blocked_pairs: set[str] = set()
     market_batch_coordinator = MarketBatchCoordinator(
+        MARKET_BATCH_SIZE,
+        STREAM_STAGING_FREEZE_SECONDS,
+    )
+    book_batch_coordinator = BookBatchCoordinator(
         MARKET_BATCH_SIZE,
         STREAM_STAGING_FREEZE_SECONDS,
     )
@@ -588,17 +682,15 @@ async def supervisor():
             )
 
             market_batch_coordinator.update(normal_pairs, now)
+            book_batch_coordinator.update(ready_pairs, now)
             desired_market_specs = market_batch_coordinator.build_task_specs(queue, client)
             desired_weak_specs = build_weak_task_specs(weak_pair_list, queue, client)
+            desired_book_specs = book_batch_coordinator.build_task_specs(queue, client)
             batch_name_by_symbol = market_batch_coordinator.get_batch_name_by_symbol()
 
             await reconcile_tasks(market_tasks, desired_market_specs)
             await reconcile_tasks(weak_tasks, desired_weak_specs)
-            desired_book_spec = (
-                all_book_ticker_worker,
-                [ready_pairs, queue, client, "book-stream"],
-            ) if ready_pairs else None
-            book_task = await reconcile_single_task(book_task, "book-stream", desired_book_spec)
+            await reconcile_tasks(book_tasks, desired_book_specs)
 
             newly_pending_status_pairs = sorted(
                 pending_status_set - previous_pending_status_pairs
@@ -660,13 +752,15 @@ async def supervisor():
                 1 for t in market_tasks.values() if not t.blocked and t.task and not t.task.done()
             )
             active_book = int(
-                bool(book_task and not book_task.blocked and book_task.task and not book_task.task.done())
+                sum(
+                    1 for t in book_tasks.values() if not t.blocked and t.task and not t.task.done()
+                )
             )
             active_weak = sum(
                 1 for t in weak_tasks.values() if not t.blocked and t.task and not t.task.done()
             )
             blocked_market = sorted(name for name, task in market_tasks.items() if task.blocked)
-            blocked_book = [book_task.name] if book_task and book_task.blocked else []
+            blocked_book = sorted(name for name, task in book_tasks.items() if task.blocked)
             blocked_weak = sorted(name for name, task in weak_tasks.items() if task.blocked)
             logger.debug(
                 f"official_trading={len(current_status_trading_pairs)}, pending_status={len(current_pending_status_pairs)}, "
@@ -699,6 +793,7 @@ async def supervisor():
             )
             update_stream_batches(
                 market_batches=build_batch_runtime_items(market_tasks),
+                book_batches=build_batch_runtime_items(book_tasks),
                 weak_batches=build_batch_runtime_items(weak_tasks),
             )
 
@@ -728,9 +823,10 @@ async def supervisor():
                     await task_info.start(reason="monitor")
                     await asyncio.sleep(0.2)
 
-            if book_task and not book_task.blocked and (not book_task.task or book_task.task.done()):
-                await book_task.start(reason="monitor")
-                await asyncio.sleep(0.2)
+            for task_info in list(book_tasks.values()):
+                if not task_info.blocked and (not task_info.task or task_info.task.done()):
+                    await task_info.start(reason="monitor")
+                    await asyncio.sleep(0.2)
 
             for task_info in list(weak_tasks.values()):
                 if not task_info.blocked and (not task_info.task or task_info.task.done()):
@@ -746,7 +842,7 @@ async def supervisor():
     finally:
         await asyncio.gather(
             *(t.stop() for t in list(market_tasks.values())),
-            *([book_task.stop()] if book_task else []),
+            *(t.stop() for t in list(book_tasks.values())),
             *(t.stop() for t in list(weak_tasks.values())),
             *(t.stop() for t in list(user_tasks.values())),
             return_exceptions=True,

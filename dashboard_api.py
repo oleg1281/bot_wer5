@@ -19,9 +19,10 @@ from dashboard_state import (
 from candle_loader import candle_loader_service
 from manual_trading import get_manual_order_context, place_manual_order
 from platform_control import get_supervisor_status, start_supervisor_task, stop_supervisor_task
-from runtime_state import get_live_kline_window, snapshot_runtime_state
+from runtime_state import apply_disabled_symbols, get_live_kline_window, snapshot_runtime_state
 from symbols_registry import (
     ALLOWED_PROJECT_STATUSES,
+    PROJECT_STATUS_DISABLED,
     list_registry_symbols,
     update_symbol_project_status,
 )
@@ -134,6 +135,9 @@ async def api_universe_update_symbol_status(symbol: str, payload: dict = Body(de
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if str(project_status).strip().upper() == PROJECT_STATUS_DISABLED:
+        apply_disabled_symbols([symbol])
+
     return {
         "item": item,
         "allowed_project_statuses": sorted(ALLOWED_PROJECT_STATUSES),
@@ -156,6 +160,9 @@ async def api_universe_bulk_update_symbol_status(payload: dict = Body(default={}
             updated_items.append(update_symbol_project_status(str(symbol), str(project_status)))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if str(project_status).strip().upper() == PROJECT_STATUS_DISABLED:
+        apply_disabled_symbols([str(symbol) for symbol in symbols])
 
     return {
         "items": updated_items,

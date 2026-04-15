@@ -262,6 +262,7 @@ def get_strategy_builder_state() -> dict:
         "pending_symbol_states": pending_symbol_states,
         "stream_batches": {
             "market": stream_batches.get("market", []),
+            "book": stream_batches.get("book", []),
             "weak": stream_batches.get("weak", []),
         },
         "candle_loader": runtime.get("candle_loader", {}),

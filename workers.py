@@ -362,3 +362,151 @@ async def all_book_ticker_worker(
             )
             await asyncio.sleep(sleep_for)
             runtime_state["reconnect_delay"] = min(delay * 2, RECONNECT_MAX_DELAY)
+
+
+async def diagnostic_book_ticker_worker(
+    symbols: list[str],
+    client,
+    stream_id: str = "book-diagnostic",
+    runtime_state=None,
+):
+    if runtime_state is None:
+        runtime_state = {}
+
+    runtime_state.setdefault("reconnect_delay", RECONNECT_BASE_DELAY)
+    runtime_state.setdefault("messages_received", 0)
+    runtime_state.setdefault("first_payload_logged", False)
+
+    if not symbols:
+        logger.info(f"{stream_id}: no symbols provided, diagnostic worker will idle")
+        while True:
+            await asyncio.sleep(30)
+
+    bm = BinanceSocketManager(
+        client,
+        user_timeout=MARKET_STREAM_TIMEOUT,
+        max_queue_size=WS_MAX_QUEUE_SIZE,
+    )
+    book_streams = build_book_ticker_streams(symbols)
+
+    logger.info(
+        f"{stream_id}: starting diagnostic multiplex bookTicker for symbols={symbols}, "
+        f"book_streams={book_streams}"
+    )
+
+    while True:
+        try:
+            async with bm.futures_multiplex_socket(
+                book_streams, category="public"
+            ) as book_stream:
+                runtime_state["reconnect_delay"] = RECONNECT_BASE_DELAY
+                logger.info(f"{stream_id}: diagnostic multiplex bookTicker stream started")
+
+                while True:
+                    message = await asyncio.wait_for(
+                        book_stream.recv(), timeout=float(MARKET_STREAM_TIMEOUT)
+                    )
+                    record_network_ingress(estimate_message_size(message))
+                    event = normalize_market_event(message)
+                    if event is None or event.get("event_type") != "book_ticker":
+                        continue
+
+                    runtime_state["messages_received"] += 1
+                    if not runtime_state["first_payload_logged"]:
+                        runtime_state["first_payload_logged"] = True
+                        logger.info(
+                            f"{stream_id}: first bookTicker received pair={event.get('pair')}, "
+                            f"bid={event.get('best_bid_price')}, ask={event.get('best_ask_price')}, "
+                            f"stream={event.get('stream')}"
+                        )
+        except Exception as e:
+            delay = runtime_state["reconnect_delay"]
+            sleep_for = min(delay + random.uniform(0, delay * 0.2), RECONNECT_MAX_DELAY)
+            logger.error(
+                f"{stream_id}: diagnostic bookTicker socket error {type(e).__name__}: {e!r}, "
+                f"retrying in {sleep_for:.1f}s"
+            )
+            await asyncio.sleep(sleep_for)
+            runtime_state["reconnect_delay"] = min(delay * 2, RECONNECT_MAX_DELAY)
+
+
+async def multiplex_book_ticker_worker(
+    symbols: list[str],
+    queue: asyncio.Queue,
+    client,
+    batch_id: str = "book-batch",
+    runtime_state=None,
+):
+    if runtime_state is None:
+        runtime_state = {}
+
+    runtime_state.setdefault("reconnect_delay", RECONNECT_BASE_DELAY)
+    runtime_state.setdefault("messages_received", 0)
+    runtime_state.setdefault("sampled_out_messages", 0)
+    runtime_state.setdefault("per_symbol_seen_counts", {})
+    runtime_state.setdefault("restart_count", 0)
+    runtime_state.setdefault("overflow_count", 0)
+
+    update_overview(
+        book_ws_queue_limit=WS_MAX_QUEUE_SIZE,
+        book_ws_overflow_count=int(runtime_state["overflow_count"]),
+        book_ws_restart_count=int(runtime_state["restart_count"]),
+        book_ws_sampled_out=int(runtime_state["sampled_out_messages"]),
+    )
+
+    bm = BinanceSocketManager(
+        client,
+        user_timeout=MARKET_STREAM_TIMEOUT,
+        max_queue_size=WS_MAX_QUEUE_SIZE,
+    )
+    book_streams = build_book_ticker_streams(symbols)
+
+    logger.info(
+        f"{batch_id}: starting multiplex bookTicker for {len(symbols)} pairs, "
+        f"book_streams={len(book_streams)}, sample_every={BOOK_TICKER_SAMPLE_EVERY}"
+    )
+
+    while True:
+        try:
+            async with bm.futures_multiplex_socket(
+                book_streams, category="public"
+            ) as book_stream:
+                runtime_state["reconnect_delay"] = RECONNECT_BASE_DELAY
+                logger.info(f"{batch_id}: multiplex bookTicker stream started")
+
+                while True:
+                    message = await asyncio.wait_for(
+                        book_stream.recv(), timeout=float(MARKET_STREAM_TIMEOUT)
+                    )
+                    record_network_ingress(estimate_message_size(message))
+                    event = normalize_market_event(message)
+                    if event is None or event.get("event_type") != "book_ticker":
+                        continue
+
+                    pair = event["pair"]
+                    seen_counts = runtime_state["per_symbol_seen_counts"]
+                    seen_counts[pair] = int(seen_counts.get(pair, 0)) + 1
+                    if BOOK_TICKER_SAMPLE_EVERY > 1 and seen_counts[pair] % BOOK_TICKER_SAMPLE_EVERY != 0:
+                        runtime_state["sampled_out_messages"] += 1
+                        continue
+
+                    runtime_state["messages_received"] += 1
+                    queue.put_nowait(event)
+        except Exception as e:
+            runtime_state["restart_count"] += 1
+            if "QueueOverflow" in type(e).__name__ or "QueueOverflow" in repr(e):
+                runtime_state["overflow_count"] += 1
+            update_overview(
+                book_ws_queue_limit=WS_MAX_QUEUE_SIZE,
+                book_ws_overflow_count=int(runtime_state["overflow_count"]),
+                book_ws_restart_count=int(runtime_state["restart_count"]),
+                book_ws_sampled_out=int(runtime_state["sampled_out_messages"]),
+            )
+            delay = runtime_state["reconnect_delay"]
+            sleep_for = min(delay + random.uniform(0, delay * 0.2), RECONNECT_MAX_DELAY)
+            logger.error(
+                f"{batch_id}: bookTicker socket error {type(e).__name__}: {e!r}, "
+                f"retrying in {sleep_for:.1f}s"
+            )
+            await asyncio.sleep(sleep_for)
+            runtime_state["reconnect_delay"] = min(delay * 2, RECONNECT_MAX_DELAY)

@@ -60,6 +60,7 @@ RUNTIME_STATE = {
     "symbol_states": {},
     "stream_batches": {
         "market": [],
+        "book": [],
         "weak": [],
     },
     "candle_loader": {
@@ -123,10 +124,12 @@ def update_symbol_lists(*, tracked_symbols=None, pending_symbols=None) -> None:
     RUNTIME_STATE["overview"]["updated_at"] = _stamp()
 
 
-def update_stream_batches(*, market_batches=None, weak_batches=None) -> None:
-    stream_batches = RUNTIME_STATE.setdefault("stream_batches", {"market": [], "weak": []})
+def update_stream_batches(*, market_batches=None, book_batches=None, weak_batches=None) -> None:
+    stream_batches = RUNTIME_STATE.setdefault("stream_batches", {"market": [], "book": [], "weak": []})
     if market_batches is not None:
         stream_batches["market"] = deepcopy(list(market_batches))
+    if book_batches is not None:
+        stream_batches["book"] = deepcopy(list(book_batches))
     if weak_batches is not None:
         stream_batches["weak"] = deepcopy(list(weak_batches))
     RUNTIME_STATE["overview"]["updated_at"] = _stamp()
@@ -141,6 +144,51 @@ def update_symbol_state(symbol: str, **values) -> None:
     state.update(deepcopy(values))
     state["updated_at"] = _stamp()
     RUNTIME_STATE["overview"]["updated_at"] = _stamp()
+
+
+def apply_disabled_symbols(symbols: list[str]) -> None:
+    normalized_symbols = sorted({str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()})
+    if not normalized_symbols:
+        return
+
+    disabled_set = set(normalized_symbols)
+
+    tracked_symbols = [symbol for symbol in RUNTIME_STATE.get("tracked_symbols", []) if symbol not in disabled_set]
+    pending_symbols = [symbol for symbol in RUNTIME_STATE.get("pending_symbols", []) if symbol not in disabled_set]
+    RUNTIME_STATE["tracked_symbols"] = tracked_symbols
+    RUNTIME_STATE["pending_symbols"] = pending_symbols
+
+    stream_batches = RUNTIME_STATE.setdefault("stream_batches", {"market": [], "book": [], "weak": []})
+    for batch_type in ("market", "book", "weak"):
+        cleaned_batches = []
+        for batch in stream_batches.get(batch_type, []):
+            symbols_in_batch = [
+                symbol for symbol in batch.get("symbols", [])
+                if symbol not in disabled_set
+            ]
+            if not symbols_in_batch:
+                continue
+
+            cleaned_batch = deepcopy(batch)
+            cleaned_batch["symbols"] = symbols_in_batch
+            cleaned_batch["symbol_count"] = len(symbols_in_batch)
+            cleaned_batches.append(cleaned_batch)
+        stream_batches[batch_type] = cleaned_batches
+
+    for symbol in normalized_symbols:
+        update_symbol_state(
+            symbol,
+            lifecycle="disabled",
+            stream_confirmed=False,
+            stream_batch_id=None,
+            is_weak=False,
+            is_blocked=False,
+            project_status="DISABLED",
+        )
+
+    overview = RUNTIME_STATE.setdefault("overview", {})
+    overview["tracked_pairs"] = len(tracked_symbols)
+    overview["updated_at"] = _stamp()
 
 
 def get_symbol_state(symbol: str) -> dict:
