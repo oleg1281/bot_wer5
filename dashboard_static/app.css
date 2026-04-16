@@ -25,12 +25,23 @@ body {
     radial-gradient(circle at top left, rgba(89, 209, 184, 0.18), transparent 32%),
     radial-gradient(circle at top right, rgba(241, 178, 74, 0.16), transparent 26%),
     linear-gradient(145deg, #031017, #0a1a22 42%, #08161d);
+  overflow-x: hidden;
 }
 
 .app-shell {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 320px 1fr;
+}
+
+.app-shell > *,
+.sidebar > *,
+.workspace > *,
+.panel,
+.topbar,
+.trade-desk,
+.bottom-grid {
+  min-width: 0;
 }
 
 .sidebar,
@@ -376,6 +387,7 @@ button:disabled {
 .selector-row label {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .selector-row span {
@@ -386,6 +398,7 @@ button:disabled {
 .combobox {
   position: relative;
   min-width: 220px;
+  width: 100%;
 }
 
 .combobox input {
@@ -1081,9 +1094,48 @@ button:disabled {
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
+  .sidebar,
+  .workspace {
+    padding: 14px;
+  }
+
+  .panel {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
   .topbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .selector-row,
+  .topbar-actions,
+  .sidebar-actions,
+  .trade-actions,
+  .universe-toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .selector-row label,
+  .topbar-actions > *,
+  .sidebar-actions > *,
+  .trade-actions > *,
+  .universe-toolbar > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .combobox {
+    min-width: 0;
+  }
+
+  button,
+  select,
+  input {
+    width: 100%;
+    min-width: 0;
   }
 
   .live-status-strip {
@@ -1098,5 +1150,44 @@ button:disabled {
   .ticket-summary,
   .trade-context-grid {
     grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .brand {
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .brand-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
+
+  .panel-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .chart-summary-strip {
+    grid-template-columns: 1fr;
+  }
+
+  #price-chart {
+    height: 320px;
+  }
+
+  #indicator-chart {
+    height: 120px;
+  }
+
+  .universe-table {
+    min-width: 560px;
   }
 }
