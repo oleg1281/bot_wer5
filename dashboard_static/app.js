@@ -110,11 +110,15 @@ function escapeHtml(value) {
 
 function renderBookWsMetrics(overview) {
   const bookWsQueueLimit = Number(overview?.book_ws_queue_limit);
+  const bookWsRealQueue = Number(overview?.book_ws_real_queue);
+  const bookWsRealPeak = Number(overview?.book_ws_real_peak);
   const bookWsOverflowCount = Number(overview?.book_ws_overflow_count);
   const bookWsRestartCount = Number(overview?.book_ws_restart_count);
   const bookWsSampledOut = Number(overview?.book_ws_sampled_out);
 
   setText("book-ws-queue-limit", Number.isFinite(bookWsQueueLimit) ? bookWsQueueLimit : 0);
+  setText("book-ws-real-queue", Number.isFinite(bookWsRealQueue) ? bookWsRealQueue : 0);
+  setText("book-ws-real-peak", Number.isFinite(bookWsRealPeak) ? bookWsRealPeak : 0);
   setText("book-ws-overflow-count", Number.isFinite(bookWsOverflowCount) ? bookWsOverflowCount : 0);
   setText("book-ws-restart-count", Number.isFinite(bookWsRestartCount) ? bookWsRestartCount : 0);
   setText("book-ws-sampled-out", Number.isFinite(bookWsSampledOut) ? bookWsSampledOut : 0);
@@ -206,6 +210,16 @@ function getUniverseFilteredItems() {
   });
 }
 
+function getUniverseItemsByExchangeStatus(exchangeStatus) {
+  const targetStatus = String(exchangeStatus || "").trim().toUpperCase();
+  if (!targetStatus) {
+    return [];
+  }
+  return (state.universe?.items || []).filter((item) => (
+    String(item.exchange_status || "").trim().toUpperCase() === targetStatus
+  ));
+}
+
 function renderUniverseStatusFilter() {
   const filterNode = document.getElementById("universe-status-filter");
   if (!filterNode) {
@@ -258,17 +272,40 @@ function toggleUniverseFilteredSelection(isSelected) {
   state.universeSelectedSymbols = Array.from(selectedSet).sort();
 }
 
+function toggleUniverseExchangeStatusSelection(exchangeStatus, isSelected) {
+  const selectedSet = new Set(state.universeSelectedSymbols || []);
+  getUniverseItemsByExchangeStatus(exchangeStatus).forEach((item) => {
+    const symbolName = String(item.symbol || "");
+    if (!symbolName) {
+      return;
+    }
+    if (isSelected) {
+      selectedSet.add(symbolName);
+    } else {
+      selectedSet.delete(symbolName);
+    }
+  });
+  state.universeSelectedSymbols = Array.from(selectedSet).sort();
+}
+
 function renderUniverseBulkControls() {
   const bulkStatusNode = document.getElementById("universe-bulk-status");
   const selectedCountNode = document.getElementById("universe-selected-count");
   const applyButton = document.getElementById("universe-apply-bulk-status");
   const selectAllNode = document.getElementById("universe-select-all");
+  const exchangeSelectNode = document.getElementById("universe-exchange-select");
+  const selectExchangeButton = document.getElementById("universe-select-exchange");
+  const clearExchangeButton = document.getElementById("universe-clear-exchange");
   const allowedStatuses = state.universe?.allowed_project_statuses || ["ACTIVE", "DISABLED"];
   const filteredItems = getUniverseFilteredItems();
   const filteredSymbols = filteredItems.map((item) => String(item.symbol || ""));
   const selectedSet = new Set(state.universeSelectedSymbols || []);
   const selectedFilteredCount = filteredSymbols.filter((symbol) => selectedSet.has(symbol)).length;
   const totalSelectedCount = selectedSet.size;
+  const exchangeStatusValue = String(exchangeSelectNode?.value || "").trim().toUpperCase();
+  const exchangeStatusCount = exchangeStatusValue
+    ? getUniverseItemsByExchangeStatus(exchangeStatusValue).length
+    : 0;
 
   if (bulkStatusNode) {
     const currentValue = bulkStatusNode.value || "";
@@ -293,6 +330,14 @@ function renderUniverseBulkControls() {
     selectAllNode.checked = hasFilteredItems && selectedFilteredCount === filteredSymbols.length;
     selectAllNode.indeterminate = selectedFilteredCount > 0 && selectedFilteredCount < filteredSymbols.length;
     selectAllNode.disabled = !hasFilteredItems;
+  }
+
+  if (selectExchangeButton) {
+    selectExchangeButton.disabled = !exchangeStatusValue || exchangeStatusCount === 0;
+  }
+
+  if (clearExchangeButton) {
+    clearExchangeButton.disabled = !exchangeStatusValue || exchangeStatusCount === 0;
   }
 }
 
@@ -1686,6 +1731,9 @@ function bindControls() {
   const symbolToggle = document.getElementById("symbol-toggle");
   const universeSearch = document.getElementById("universe-search");
   const universeStatusFilter = document.getElementById("universe-status-filter");
+  const universeExchangeSelect = document.getElementById("universe-exchange-select");
+  const universeSelectExchange = document.getElementById("universe-select-exchange");
+  const universeClearExchange = document.getElementById("universe-clear-exchange");
   const universeSelectAll = document.getElementById("universe-select-all");
   const universeBulkStatus = document.getElementById("universe-bulk-status");
   const universeApplyBulkStatus = document.getElementById("universe-apply-bulk-status");
@@ -1797,6 +1845,28 @@ function bindControls() {
 
   universeStatusFilter?.addEventListener("change", () => {
     state.universeStatusFilter = universeStatusFilter.value || "ALL";
+    renderUniverse();
+  });
+
+  universeExchangeSelect?.addEventListener("change", () => {
+    renderUniverseBulkControls();
+  });
+
+  universeSelectExchange?.addEventListener("click", () => {
+    const exchangeStatus = String(universeExchangeSelect?.value || "").trim().toUpperCase();
+    if (!exchangeStatus) {
+      return;
+    }
+    toggleUniverseExchangeStatusSelection(exchangeStatus, true);
+    renderUniverse();
+  });
+
+  universeClearExchange?.addEventListener("click", () => {
+    const exchangeStatus = String(universeExchangeSelect?.value || "").trim().toUpperCase();
+    if (!exchangeStatus) {
+      return;
+    }
+    toggleUniverseExchangeStatusSelection(exchangeStatus, false);
     renderUniverse();
   });
 

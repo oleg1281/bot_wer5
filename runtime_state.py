@@ -11,6 +11,7 @@ NETWORK_SAMPLES = deque()
 NETWORK_BYTES_WINDOW_TOTAL = 0
 QUEUE_PEAK_WINDOW_SECONDS = 10.0
 QUEUE_SAMPLES = deque()
+BOOK_WS_SOCKET_METRICS: dict[str, dict[str, int]] = {}
 LIVE_KLINE_WINDOW_MS = 3 * 60_000
 LIVE_KLINE_WINDOWS: dict[str, deque] = {}
 SYMBOL_EVENT_WINDOW_SECONDS = 60.0
@@ -27,6 +28,8 @@ RUNTIME_STATE = {
         "queue_size": 0,
         "queue_peak": 0,
         "book_ws_queue_limit": 0,
+        "book_ws_real_queue": 0,
+        "book_ws_real_peak": 0,
         "book_ws_overflow_count": 0,
         "book_ws_restart_count": 0,
         "book_ws_sampled_out": 0,
@@ -132,6 +135,34 @@ def update_stream_batches(*, market_batches=None, book_batches=None, weak_batche
         stream_batches["book"] = deepcopy(list(book_batches))
     if weak_batches is not None:
         stream_batches["weak"] = deepcopy(list(weak_batches))
+    RUNTIME_STATE["overview"]["updated_at"] = _stamp()
+
+
+def record_book_ws_socket_metrics(socket_id: str, queue_size: int, queue_peak: int) -> None:
+    if not socket_id:
+        return
+
+    BOOK_WS_SOCKET_METRICS[str(socket_id)] = {
+        "queue_size": max(0, int(queue_size)),
+        "queue_peak": max(0, int(queue_peak)),
+    }
+    current_max = max((item["queue_size"] for item in BOOK_WS_SOCKET_METRICS.values()), default=0)
+    peak_max = max((item["queue_peak"] for item in BOOK_WS_SOCKET_METRICS.values()), default=0)
+    RUNTIME_STATE["overview"]["book_ws_real_queue"] = current_max
+    RUNTIME_STATE["overview"]["book_ws_real_peak"] = max(
+        int(RUNTIME_STATE["overview"].get("book_ws_real_peak", 0)),
+        peak_max,
+    )
+    RUNTIME_STATE["overview"]["updated_at"] = _stamp()
+
+
+def clear_book_ws_socket_metrics(socket_id: str) -> None:
+    if not socket_id:
+        return
+
+    BOOK_WS_SOCKET_METRICS.pop(str(socket_id), None)
+    current_max = max((item["queue_size"] for item in BOOK_WS_SOCKET_METRICS.values()), default=0)
+    RUNTIME_STATE["overview"]["book_ws_real_queue"] = current_max
     RUNTIME_STATE["overview"]["updated_at"] = _stamp()
 
 

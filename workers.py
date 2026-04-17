@@ -7,6 +7,7 @@ from binance import BinanceSocketManager
 
 from logger_setup import setup_logger
 from runtime_state import record_network_ingress, update_overview
+from websocket_metrics_patch import attach_ws_metrics_target
 
 logger = setup_logger()
 
@@ -318,6 +319,7 @@ async def all_book_ticker_worker(
     while True:
         try:
             async with bm.all_ticker_futures_socket(channel="!bookTicker") as book_stream:
+                attach_ws_metrics_target(book_stream, stream_id)
                 runtime_state["reconnect_delay"] = RECONNECT_BASE_DELAY
                 logger.info(f"{stream_id}: global futures bookTicker stream started")
 
@@ -399,6 +401,7 @@ async def diagnostic_book_ticker_worker(
             async with bm.futures_multiplex_socket(
                 book_streams, category="public"
             ) as book_stream:
+                attach_ws_metrics_target(book_stream, stream_id)
                 runtime_state["reconnect_delay"] = RECONNECT_BASE_DELAY
                 logger.info(f"{stream_id}: diagnostic multiplex bookTicker stream started")
 
@@ -471,6 +474,7 @@ async def multiplex_book_ticker_worker(
             async with bm.futures_multiplex_socket(
                 book_streams, category="public"
             ) as book_stream:
+                attach_ws_metrics_target(book_stream, batch_id)
                 runtime_state["reconnect_delay"] = RECONNECT_BASE_DELAY
                 logger.info(f"{batch_id}: multiplex bookTicker stream started")
 

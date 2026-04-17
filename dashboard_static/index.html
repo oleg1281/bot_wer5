@@ -57,6 +57,14 @@
             <strong id="book-ws-queue-limit">0</strong>
           </div>
           <div class="metric">
+            <span>Book WS Real Q</span>
+            <strong id="book-ws-real-queue">0</strong>
+          </div>
+          <div class="metric">
+            <span>Book WS Real Peak</span>
+            <strong id="book-ws-real-peak">0</strong>
+          </div>
+          <div class="metric">
             <span>Book WS Overflows</span>
             <strong id="book-ws-overflow-count">0</strong>
           </div>
@@ -410,6 +418,14 @@
             <select id="universe-status-filter">
               <option value="ALL">All statuses</option>
             </select>
+            <select id="universe-exchange-select">
+              <option value="">Select exchange...</option>
+              <option value="TRADING">TRADING</option>
+              <option value="MISSING">MISSING</option>
+              <option value="SETTLING">SETTLING</option>
+            </select>
+            <button id="universe-select-exchange" type="button">Select</button>
+            <button id="universe-clear-exchange" type="button">Clear</button>
             <span id="universe-selected-count" class="pill universe-selected-pill">0 selected</span>
             <select id="universe-bulk-status">
               <option value="">Bulk status...</option>

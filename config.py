@@ -23,6 +23,9 @@ uri_stream_1M = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_1M"
 # graphics
 url_graphics = 'https://api.binance.com/api/v3/klines'
 
+# diagnostics
+ENABLE_WS_QUEUE_METRICS = True
+
 #KLINE_INTERVAL_1MINUTE
 #KLINE_INTERVAL_3MINUTE
 #KLINE_INTERVAL_5MINUTE

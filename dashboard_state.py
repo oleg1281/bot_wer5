@@ -28,6 +28,8 @@ class OverviewSnapshot:
     queue_size: int
     queue_peak: int
     book_ws_queue_limit: int
+    book_ws_real_queue: int
+    book_ws_real_peak: int
     book_ws_overflow_count: int
     book_ws_restart_count: int
     book_ws_sampled_out: int
@@ -59,6 +61,8 @@ def get_overview_snapshot() -> dict:
         queue_size=int(overview.get("queue_size", 0)),
         queue_peak=int(overview.get("queue_peak", 0)),
         book_ws_queue_limit=int(overview.get("book_ws_queue_limit", 0)),
+        book_ws_real_queue=int(overview.get("book_ws_real_queue", 0)),
+        book_ws_real_peak=int(overview.get("book_ws_real_peak", 0)),
         book_ws_overflow_count=int(overview.get("book_ws_overflow_count", 0)),
         book_ws_restart_count=int(overview.get("book_ws_restart_count", 0)),
         book_ws_sampled_out=int(overview.get("book_ws_sampled_out", 0)),

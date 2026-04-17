@@ -1,9 +1,11 @@
 import asyncio
 
 from platform_control import register_platform_loop, start_supervisor_task, wait_for_supervisor
+from websocket_metrics_patch import apply_ws_queue_metrics_patch
 
 
 async def run_platform():
+    apply_ws_queue_metrics_patch()
     register_platform_loop(asyncio.get_running_loop())
     await start_supervisor_task()
     dashboard_task = None
